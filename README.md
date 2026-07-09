@@ -31,20 +31,32 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 3) Set Telegram environment variables
+### 3) Telegram credentials file (committed)
 
 ```bash
-export TELEGRAM_BOT_TOKEN="YOUR_TELEGRAM_BOT_TOKEN"
-export TELEGRAM_CHAT_ID="YOUR_TELEGRAM_CHAT_ID"
+cat telegram.env
 ```
 
-For production, store these in a secure env file (example: `/etc/default/stocksignal`)
-and source that file before running the script.
+The script uses:
+
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+
+Load from the repo file before running:
+
+```bash
+set -a
+source ./telegram.env
+set +a
+```
 
 ### 4) Test manually
 
 ```bash
 source .venv/bin/activate
+set -a
+source ./telegram.env
+set +a
 python3 weekly_hk_stock_alert.py --always-send
 ```
 
@@ -62,13 +74,13 @@ Add:
 
 ```cron
 CRON_TZ=Asia/Hong_Kong
-0 21 * * 6 . /path/to/stocksignal/.venv/bin/activate && . /etc/default/stocksignal && python /path/to/stocksignal/weekly_hk_stock_alert.py >> /var/log/stocksignal.log 2>&1
+0 21 * * 6 . /path/to/stocksignal/.venv/bin/activate && set -a && . /path/to/stocksignal/telegram.env && set +a && python /path/to/stocksignal/weekly_hk_stock_alert.py >> /var/log/stocksignal.log 2>&1
 ```
 
 Notes:
 
 - `6` means Saturday in cron.
-- Keep `/etc/default/stocksignal` readable only by trusted users.
+- Keep `telegram.env` readable only by trusted users.
 - Ensure `/var/log/stocksignal.log` is writable by the cron user.
 
 ## Signal definitions
