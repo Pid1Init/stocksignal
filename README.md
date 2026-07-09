@@ -10,6 +10,7 @@ Weekly Hong Kong watchlist scanner that:
 ## Files
 
 - `weekly_hk_stock_alert.py`: main scanner script
+- `run_weekly_scan.sh`: one-command launcher (loads `.venv` + `telegram.env`)
 - `requirements.txt`: Python dependencies
 
 ## Ubuntu VPS deployment
@@ -53,11 +54,8 @@ set +a
 ### 4) Test manually
 
 ```bash
-source .venv/bin/activate
-set -a
-source ./telegram.env
-set +a
-python3 weekly_hk_stock_alert.py --always-send
+chmod +x ./run_weekly_scan.sh
+./run_weekly_scan.sh --always-send
 ```
 
 `--always-send` is optional and sends a Telegram message even when no signals are found.
@@ -74,7 +72,7 @@ Add:
 
 ```cron
 CRON_TZ=Asia/Hong_Kong
-0 21 * * 6 . /path/to/stocksignal/.venv/bin/activate && set -a && . /path/to/stocksignal/telegram.env && set +a && python /path/to/stocksignal/weekly_hk_stock_alert.py >> /var/log/stocksignal.log 2>&1
+0 21 * * 6 /path/to/stocksignal/run_weekly_scan.sh >> /var/log/stocksignal.log 2>&1
 ```
 
 Notes:
