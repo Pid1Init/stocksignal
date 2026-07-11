@@ -110,7 +110,41 @@ def download_daily_ohlc(symbol: str, lookback_months: int = 6) -> pd.DataFrame:
     else:
         idx = idx.tz_convert(HKT)
     df.index = idx
-    return df[["Open", "High", "Low", "Close", "Volume"]].dropna()
+
+    # yfinance can return either:
+    # 1) flat columns: Open/High/Low/Close/Volume
+    # 2) MultiIndex columns, e.g. (Price, Ticker) or (Ticker, Price)
+    # Normalize into a flat OHLCV frame regardless of the format.
+    if isinstance(df.columns, pd.MultiIndex):
+        if symbol in df.columns.get_level_values(0):
+            flattened = df.xs(symbol, axis=1, level=0)
+        elif symbol in df.columns.get_level_values(1):
+            flattened = df.xs(symbol, axis=1, level=1)
+        else:
+            # Fallback: flatten tuples and use first matching OHLCV labels.
+            flattened = df.copy()
+            flattened.columns = [
+                "_".join(str(part) for part in col if part is not None)
+                for col in flattened.columns.to_flat_index()
+            ]
+            rename_map = {}
+            for col in flattened.columns:
+                for field in ("Open", "High", "Low", "Close", "Volume"):
+                    if col.startswith(f"{field}_") or col.endswith(f"_{field}"):
+                        rename_map[col] = field
+                        break
+            flattened = flattened.rename(columns=rename_map)
+        df = flattened
+
+    required_cols = ["Open", "High", "Low", "Close", "Volume"]
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        raise KeyError(
+            f"Missing OHLCV columns after normalization: {missing_cols}; "
+            f"available={list(df.columns)}"
+        )
+
+    return df[required_cols].dropna()
 
 
 def daily_to_weekly(df_daily: pd.DataFrame) -> pd.DataFrame:
