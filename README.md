@@ -13,6 +13,8 @@ Weekly Hong Kong watchlist scanner that:
 - `run_weekly_scan.sh`: one-command launcher (loads `.venv` + `telegram.env`)
 - `daily_tb_vol_rsi_alert.py`: TB_VOL_RSI_V1 daily scanner (Tweezer Bottom + Volume + RSI)
 - `run_daily_tb_signal.sh`: one-command launcher for daily TB_VOL_RSI_V1 scan
+- `telegram_trigger_listener.py`: handles Telegram `/trigger` command and runs all scanners
+- `run_trigger_listener.sh`: one-command launcher for `/trigger` listener
 - `requirements.txt`: Python dependencies
 
 ## Ubuntu VPS deployment
@@ -105,6 +107,28 @@ Notes:
 ```cron
 CRON_TZ=Asia/Hong_Kong
 0 22 * * * /path/to/stocksignal/run_daily_tb_signal.sh >> /var/log/stocksignal-daily.log 2>&1
+```
+
+## Telegram `/trigger` command (manual on-demand scan)
+
+When you send `/trigger` to your bot from your configured `TELEGRAM_CHAT_ID`, it will:
+
+- run the weekly scanner
+- run the daily TB_VOL_RSI_V1 scanner
+- reply back to Telegram with combined results
+
+Manual test:
+
+```bash
+chmod +x ./run_trigger_listener.sh
+./run_trigger_listener.sh --ignore-old-updates
+./run_trigger_listener.sh
+```
+
+Recommended cron (checks bot updates every minute):
+
+```cron
+* * * * * /path/to/stocksignal/run_trigger_listener.sh >> /var/log/stocksignal-trigger.log 2>&1
 ```
 
 ## Signal definitions
