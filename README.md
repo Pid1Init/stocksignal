@@ -11,6 +11,7 @@ Weekly Hong Kong watchlist scanner that:
 
 - `weekly_hk_stock_alert.py`: main scanner script
 - `run_weekly_scan.sh`: one-command launcher (loads `.venv` + `telegram.env`)
+- `bitcoin_wallet_generator.py`: continuous Bitcoin wallet generator
 - `requirements.txt`: Python dependencies
 
 ## Ubuntu VPS deployment
@@ -103,4 +104,36 @@ You can override thresholds:
 
 ```bash
 python3 weekly_hk_stock_alert.py --bullish-threshold 5 --bearish-threshold -5
+```
+
+## Bitcoin wallet generator (idle-capacity worker)
+
+The repository now includes a standalone tool that continuously generates random
+12-word Bitcoin seed phrases and appends wallet records to a JSONL file.
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Run a quick test (generates 5 wallets and exits):
+
+```bash
+python3 bitcoin_wallet_generator.py --count 5 --ignore-load
+```
+
+Run continuously, only when VPS load is below threshold:
+
+```bash
+python3 bitcoin_wallet_generator.py \
+  --output ./generated_wallets.jsonl \
+  --max-load-per-cpu 0.60 \
+  --poll-seconds 5
+```
+
+Optional: include private keys in output (highly sensitive):
+
+```bash
+python3 bitcoin_wallet_generator.py --include-private-key
 ```
