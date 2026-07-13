@@ -203,6 +203,7 @@ python3 bitcoin_wallet_generator.py --include-private-key
 ### Telegram commands
 
 - `/new` — clears `generated_wallets.jsonl` backlog and continues generation.
+- `/check` — triggers an immediate wallet balance summary message.
 
 The script reads Telegram credentials from env vars:
 
