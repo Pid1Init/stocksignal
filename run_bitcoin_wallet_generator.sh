@@ -22,4 +22,6 @@ exec python3 bitcoin_wallet_generator.py \
   --max-load-per-cpu 0.60 \
   --poll-seconds 5 \
   --telegram-summary-interval-seconds 3600 \
-  --storage-limit-gb 85
+  --storage-limit-gb 85 \
+  --balance-mode local-node \
+  --bitcoin-cli-path bitcoin-cli

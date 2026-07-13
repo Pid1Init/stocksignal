@@ -115,8 +115,10 @@ The repository now includes a standalone tool that continuously generates random
 
 - Continuous wallet generation (optionally gated by VPS load)
 - Backlog cap at configurable size (default `85 GB`)
+- Local-node balance mode using Bitcoin Core (`bitcoin-cli`) for high scale
 - Hourly Telegram summary of total BTC across all generated wallet addresses
 - Telegram `/new` command to clear backlog and continue generating fresh wallets
+- Batched address import worker for `100k+` wallet tracking
 
 Install dependencies:
 
@@ -130,7 +132,7 @@ Run a quick test (generates 5 wallets and exits, Telegram disabled):
 python3 bitcoin_wallet_generator.py --count 5 --ignore-load --disable-telegram
 ```
 
-Run continuously, only when VPS load is below threshold:
+Run continuously with local-node balance mode:
 
 ```bash
 python3 bitcoin_wallet_generator.py \
@@ -138,7 +140,9 @@ python3 bitcoin_wallet_generator.py \
   --max-load-per-cpu 0.60 \
   --poll-seconds 5 \
   --storage-limit-gb 85 \
-  --telegram-summary-interval-seconds 3600
+  --telegram-summary-interval-seconds 3600 \
+  --balance-mode local-node \
+  --bitcoin-cli-path bitcoin-cli
 ```
 
 Optional: include private keys in output (highly sensitive):
@@ -155,6 +159,44 @@ The script reads Telegram credentials from env vars:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
+
+### Full-node setup for local mode
+
+`--balance-mode local-node` requires a local Bitcoin Core node and `bitcoin-cli`.
+
+Important storage note: **a real Bitcoin full node does not fit safely in 7 GB**.
+Even in prune mode, chainstate + wallet/index overhead is already above that
+budget on modern chain heights. Use a larger disk budget (at least tens of GB).
+
+Ubuntu setup example:
+
+```bash
+sudo apt update
+sudo apt install -y bitcoind bitcoin-cli
+mkdir -p ~/.bitcoin
+```
+
+Create `~/.bitcoin/bitcoin.conf`:
+
+```ini
+server=1
+daemon=1
+txindex=0
+prune=5500
+rpcbind=127.0.0.1
+rpcallowip=127.0.0.1
+```
+
+Start node and verify sync status:
+
+```bash
+bitcoind -daemon
+bitcoin-cli getblockchaininfo
+```
+
+The Python generator auto-creates and uses watch-only wallet(s) via
+`bitcoin-cli` in local mode. `/new` creates a fresh watch-only wallet namespace
+so hourly totals reflect only newly generated addresses after reset.
 
 ### systemd service (auto-start on reboot)
 

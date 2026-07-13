@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import decimal
 import json
 import os
+import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -99,23 +101,199 @@ def backlog_size_bytes(output_file: Path) -> int:
     return output_file.stat().st_size
 
 
-def iter_wallet_records(output_file: Path) -> list[dict[str, Any]]:
-    if not output_file.exists():
-        return []
+def run_bitcoin_cli(
+    bitcoin_cli_path: str, args: list[str], wallet_name: str | None = None
+) -> Any:
+    cmd = [bitcoin_cli_path]
+    if wallet_name:
+        cmd.append(f"-rpcwallet={wallet_name}")
+    cmd.extend(args)
 
-    records: list[dict[str, Any]] = []
+    completed = subprocess.run(
+        cmd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    stdout = completed.stdout.strip()
+    if not stdout:
+        return {}
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError:
+        return stdout
+
+
+def wallet_exists(bitcoin_cli_path: str, wallet_name: str) -> bool:
+    payload = run_bitcoin_cli(bitcoin_cli_path, ["listwalletdir"])
+    wallets = payload.get("wallets", []) if isinstance(payload, dict) else []
+    return any(item.get("name") == wallet_name for item in wallets if isinstance(item, dict))
+
+
+def wallet_loaded(bitcoin_cli_path: str, wallet_name: str) -> bool:
+    payload = run_bitcoin_cli(bitcoin_cli_path, ["listwallets"])
+    return isinstance(payload, list) and wallet_name in payload
+
+
+def ensure_local_watchonly_wallet(bitcoin_cli_path: str, wallet_name: str) -> None:
+    if wallet_loaded(bitcoin_cli_path, wallet_name):
+        return
+
+    if wallet_exists(bitcoin_cli_path, wallet_name):
+        run_bitcoin_cli(bitcoin_cli_path, ["loadwallet", wallet_name])
+        return
+
+    run_bitcoin_cli(
+        bitcoin_cli_path,
+        [
+            "-named",
+            "createwallet",
+            f"wallet_name={wallet_name}",
+            "disable_private_keys=true",
+            "blank=true",
+            "descriptors=false",
+            "load_on_startup=true",
+        ],
+    )
+
+
+def import_addresses_to_local_wallet(
+    bitcoin_cli_path: str,
+    wallet_name: str,
+    addresses: list[str],
+) -> int:
+    if not addresses:
+        return 0
+
+    requests_payload = [
+        {
+            "scriptPubKey": {"address": address},
+            "timestamp": "now",
+            "watchonly": True,
+            "label": "walletgen",
+        }
+        for address in addresses
+    ]
+    results = run_bitcoin_cli(
+        bitcoin_cli_path,
+        [
+            "importmulti",
+            json.dumps(requests_payload, ensure_ascii=True),
+            json.dumps({"rescan": False}, ensure_ascii=True),
+        ],
+        wallet_name=wallet_name,
+    )
+    if not isinstance(results, list):
+        return 0
+
+    imported = 0
+    for item in results:
+        if isinstance(item, dict) and item.get("success", False):
+            imported += 1
+    return imported
+
+
+def read_new_addresses_from_backlog(
+    output_file: Path,
+    start_offset: int,
+    max_records: int,
+) -> tuple[list[str], int, bool]:
+    if not output_file.exists():
+        return [], 0, start_offset > 0
+
+    current_size = output_file.stat().st_size
+    was_truncated = start_offset > current_size
+    offset = 0 if was_truncated else start_offset
+
+    addresses: list[str] = []
     with output_file.open("r", encoding="utf-8") as f:
-        for line in f:
+        f.seek(offset)
+        while len(addresses) < max_records:
+            line = f.readline()
+            if not line:
+                break
+            next_offset = f.tell()
             raw_line = line.strip()
             if not raw_line:
+                offset = next_offset
                 continue
+
             try:
-                parsed = json.loads(raw_line)
+                payload = json.loads(raw_line)
+            except json.JSONDecodeError:
+                offset = next_offset
+                continue
+
+            if isinstance(payload, dict):
+                address = str(payload.get("address", "")).strip()
+                if address:
+                    addresses.append(address)
+            offset = next_offset
+
+    return addresses, offset, was_truncated
+
+
+def compute_total_balance_via_api(output_file: Path, balance_api_base: str) -> tuple[int, int, int]:
+    if not output_file.exists():
+        return 0, 0, 0
+
+    addresses: set[str] = set()
+    with output_file.open("r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                payload = json.loads(line.strip())
             except json.JSONDecodeError:
                 continue
-            if isinstance(parsed, dict):
-                records.append(parsed)
-    return records
+            if not isinstance(payload, dict):
+                continue
+            address = str(payload.get("address", "")).strip()
+            if address:
+                addresses.add(address)
+
+    total_sats = 0
+    failed_lookups = 0
+    for address in sorted(addresses):
+        url = f"{balance_api_base.rstrip('/')}/address/{address}"
+        try:
+            response = requests.get(url, timeout=20)
+            response.raise_for_status()
+            payload = response.json()
+            chain_stats = payload.get("chain_stats", {})
+            mempool_stats = payload.get("mempool_stats", {})
+            chain_balance = int(chain_stats.get("funded_txo_sum", 0)) - int(
+                chain_stats.get("spent_txo_sum", 0)
+            )
+            mempool_balance = int(mempool_stats.get("funded_txo_sum", 0)) - int(
+                mempool_stats.get("spent_txo_sum", 0)
+            )
+            total_sats += max(0, chain_balance + mempool_balance)
+        except Exception:  # pylint: disable=broad-except
+            failed_lookups += 1
+        time.sleep(0.03)
+
+    return len(addresses), total_sats, failed_lookups
+
+
+def compute_total_balance_via_local_node(
+    bitcoin_cli_path: str,
+    wallet_name: str,
+) -> tuple[int, int]:
+    payload = run_bitcoin_cli(bitcoin_cli_path, ["getbalances"], wallet_name=wallet_name)
+    if not isinstance(payload, dict):
+        return 0, 0
+
+    watchonly = payload.get("watchonly", {})
+    trusted_btc = decimal.Decimal(str(watchonly.get("trusted", 0)))
+    pending_btc = decimal.Decimal(str(watchonly.get("untrusted_pending", 0)))
+    total_sats = int((trusted_btc + pending_btc) * decimal.Decimal("100000000"))
+
+    tracked = run_bitcoin_cli(
+        bitcoin_cli_path,
+        ["listreceivedbyaddress", "0", "true", "true"],
+        wallet_name=wallet_name,
+    )
+    tracked_addresses = len(tracked) if isinstance(tracked, list) else 0
+    return tracked_addresses, max(0, total_sats)
 
 
 def send_telegram_message(bot_token: str, chat_id: str, text: str) -> None:
@@ -320,6 +498,34 @@ def parse_args() -> argparse.Namespace:
         default="https://blockstream.info/api",
         help="Base API URL used to check BTC balances per address.",
     )
+    parser.add_argument(
+        "--balance-mode",
+        choices=("local-node", "api"),
+        default="local-node",
+        help="Balance source mode. local-node is recommended for 100k+ addresses.",
+    )
+    parser.add_argument(
+        "--bitcoin-cli-path",
+        default="bitcoin-cli",
+        help="Path to bitcoin-cli executable for local-node mode.",
+    )
+    parser.add_argument(
+        "--watchonly-wallet-base-name",
+        default="walletgen_watch",
+        help="Base name for local watch-only wallet(s).",
+    )
+    parser.add_argument(
+        "--import-batch-size",
+        type=int,
+        default=2000,
+        help="Addresses imported per local-node sync batch.",
+    )
+    parser.add_argument(
+        "--import-sync-interval-seconds",
+        type=float,
+        default=2.0,
+        help="How often backlog addresses are synced to local node wallet.",
+    )
     return parser.parse_args()
 
 
@@ -336,10 +542,25 @@ def main() -> None:
     generated = int(state.get("generated", 0))
     telegram_offset = int(state.get("telegram_offset", 0))
     storage_limit_notified = bool(state.get("storage_limit_notified", False))
+    imported_offset = int(state.get("imported_offset", 0))
+    imported_total = int(state.get("imported_total", 0))
+    active_wallet_name = str(
+        state.get("active_watchonly_wallet", args.watchonly_wallet_base_name)
+    ).strip() or args.watchonly_wallet_base_name
+
+    local_node_ready = args.balance_mode != "local-node"
+    if args.balance_mode == "local-node":
+        try:
+            ensure_local_watchonly_wallet(args.bitcoin_cli_path, active_wallet_name)
+            local_node_ready = True
+        except Exception as exc:  # pylint: disable=broad-except
+            local_node_ready = False
+            print(f"Local-node setup error ({active_wallet_name}): {exc}")
 
     next_poll = time.monotonic()
     next_summary = time.monotonic() + max(10.0, args.telegram_summary_interval_seconds)
     next_generation = time.monotonic()
+    next_import_sync = time.monotonic()
 
     print(
         "Starting wallet generation daemon. Press Ctrl+C to stop. "
@@ -367,22 +588,85 @@ def main() -> None:
                     if was_cleared:
                         generated = 0
                         storage_limit_notified = False
+                        imported_offset = 0
+                        imported_total = 0
+                        if args.balance_mode == "local-node":
+                            active_wallet_name = (
+                                f"{args.watchonly_wallet_base_name}_{int(time.time())}"
+                            )
+                            try:
+                                ensure_local_watchonly_wallet(
+                                    args.bitcoin_cli_path, active_wallet_name
+                                )
+                                local_node_ready = True
+                            except Exception as exc:  # pylint: disable=broad-except
+                                local_node_ready = False
+                                print(
+                                    f"Could not create fresh watch-only wallet "
+                                    f"({active_wallet_name}): {exc}"
+                                )
                         print("Received /new command; backlog cleared.")
                 except Exception as exc:  # pylint: disable=broad-except
                     print(f"Telegram polling error: {exc}")
                 next_poll = now + max(1.0, args.telegram_poll_seconds)
 
+            if (
+                args.balance_mode == "local-node"
+                and local_node_ready
+                and now >= next_import_sync
+            ):
+                try:
+                    new_addresses, imported_offset, was_truncated = (
+                        read_new_addresses_from_backlog(
+                            output_file=args.output,
+                            start_offset=imported_offset,
+                            max_records=max(1, args.import_batch_size),
+                        )
+                    )
+                    if was_truncated:
+                        imported_total = 0
+                    if new_addresses:
+                        imported_now = import_addresses_to_local_wallet(
+                            bitcoin_cli_path=args.bitcoin_cli_path,
+                            wallet_name=active_wallet_name,
+                            addresses=new_addresses,
+                        )
+                        imported_total += imported_now
+                        print(
+                            f"Imported {imported_now}/{len(new_addresses)} address(es) "
+                            f"to {active_wallet_name}."
+                        )
+                except Exception as exc:  # pylint: disable=broad-except
+                    print(f"Local-node import sync error: {exc}")
+                next_import_sync = now + max(0.2, args.import_sync_interval_seconds)
+
             if telegram_enabled and now >= next_summary:
                 try:
-                    wallet_count, total_sats, failed_lookups = compute_total_balance(
-                        output_file=args.output,
-                        balance_api_base=args.balance_api_base,
-                    )
+                    if args.balance_mode == "local-node":
+                        if not local_node_ready:
+                            raise RuntimeError(
+                                "Local node mode enabled but wallet is unavailable."
+                            )
+                        wallet_count, total_sats = compute_total_balance_via_local_node(
+                            bitcoin_cli_path=args.bitcoin_cli_path,
+                            wallet_name=active_wallet_name,
+                        )
+                        failed_lookups = 0
+                        source_line = "Source: local-node (Bitcoin Core wallet)"
+                    else:
+                        wallet_count, total_sats, failed_lookups = (
+                            compute_total_balance_via_api(
+                                output_file=args.output,
+                                balance_api_base=args.balance_api_base,
+                            )
+                        )
+                        source_line = f"Source: API ({args.balance_api_base})"
                     message = (
                         "Bitcoin wallet hourly summary\n"
                         f"Wallets tracked: {wallet_count}\n"
                         f"Total BTC: {total_sats / 100_000_000:.8f}\n"
-                        f"Failed balance checks: {failed_lookups}"
+                        f"Failed balance checks: {failed_lookups}\n"
+                        f"{source_line}"
                     )
                     send_telegram_message(
                         bot_token=args.telegram_bot_token,
@@ -424,8 +708,12 @@ def main() -> None:
                 args.state_file,
                 {
                     "generated": generated,
+                    "imported_offset": imported_offset,
+                    "imported_total": imported_total,
                     "telegram_offset": telegram_offset,
                     "storage_limit_notified": storage_limit_notified,
+                    "active_watchonly_wallet": active_wallet_name,
+                    "local_node_ready": local_node_ready,
                     "updated_at_utc": datetime.now(tz=timezone.utc).isoformat(),
                 },
             )
