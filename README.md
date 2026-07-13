@@ -247,6 +247,7 @@ bitcoin-cli getblockchaininfo
 The Python generator auto-creates and uses watch-only wallet(s) via
 `bitcoin-cli` in local mode. `/new` creates a fresh watch-only wallet namespace
 so hourly totals reflect only newly generated addresses after reset.
+On modern Bitcoin Core versions, this uses descriptor watch-only wallets.
 
 ### systemd service (auto-start on reboot)
 

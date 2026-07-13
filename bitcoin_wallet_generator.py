@@ -151,10 +151,23 @@ def ensure_local_watchonly_wallet(bitcoin_cli_path: str, wallet_name: str) -> No
             f"wallet_name={wallet_name}",
             "disable_private_keys=true",
             "blank=true",
-            "descriptors=false",
+            "descriptors=true",
             "load_on_startup=true",
         ],
     )
+
+
+def descriptor_for_address(bitcoin_cli_path: str, address: str) -> str:
+    descriptor_payload = run_bitcoin_cli(
+        bitcoin_cli_path,
+        ["getdescriptorinfo", f"addr({address})"],
+    )
+    if not isinstance(descriptor_payload, dict):
+        raise RuntimeError("Could not build descriptor for address.")
+    descriptor = str(descriptor_payload.get("descriptor", "")).strip()
+    if not descriptor:
+        raise RuntimeError("Missing descriptor in getdescriptorinfo response.")
+    return descriptor
 
 
 def import_addresses_to_local_wallet(
@@ -165,21 +178,23 @@ def import_addresses_to_local_wallet(
     if not addresses:
         return 0
 
-    requests_payload = [
-        {
-            "scriptPubKey": {"address": address},
-            "timestamp": "now",
-            "watchonly": True,
-            "label": "walletgen",
-        }
-        for address in addresses
-    ]
+    requests_payload = []
+    for address in addresses:
+        requests_payload.append(
+            {
+                "desc": descriptor_for_address(bitcoin_cli_path, address),
+                "timestamp": "now",
+                "active": False,
+                "internal": False,
+                "label": "walletgen",
+            }
+        )
+
     results = run_bitcoin_cli(
         bitcoin_cli_path,
         [
-            "importmulti",
+            "importdescriptors",
             json.dumps(requests_payload, ensure_ascii=True),
-            json.dumps({"rescan": False}, ensure_ascii=True),
         ],
         wallet_name=wallet_name,
     )
@@ -566,6 +581,7 @@ def main() -> None:
     next_summary = time.monotonic() + max(10.0, args.telegram_summary_interval_seconds)
     next_generation = time.monotonic()
     next_import_sync = time.monotonic()
+    next_local_node_retry = time.monotonic()
     manual_summary_requested = False
 
     print(
@@ -582,6 +598,15 @@ def main() -> None:
             if args.count > 0 and generated >= args.count:
                 print(f"Reached requested count ({args.count}). Exiting.")
                 break
+
+            if args.balance_mode == "local-node" and (not local_node_ready) and now >= next_local_node_retry:
+                try:
+                    ensure_local_watchonly_wallet(args.bitcoin_cli_path, active_wallet_name)
+                    local_node_ready = True
+                    print(f"Local-node wallet ready: {active_wallet_name}")
+                except Exception as exc:  # pylint: disable=broad-except
+                    print(f"Local-node setup retry failed ({active_wallet_name}): {exc}")
+                next_local_node_retry = now + 15.0
 
             if telegram_enabled and now >= next_poll:
                 try:
@@ -677,6 +702,14 @@ def main() -> None:
                     )
                 except Exception as exc:  # pylint: disable=broad-except
                     print(f"Hourly summary error: {exc}")
+                    try:
+                        send_telegram_message(
+                            bot_token=args.telegram_bot_token,
+                            chat_id=str(args.telegram_chat_id),
+                            text=f"Balance summary failed: {exc}",
+                        )
+                    except Exception:  # pylint: disable=broad-except
+                        pass
                 if should_send_scheduled_summary:
                     next_summary = now + max(10.0, args.telegram_summary_interval_seconds)
                 manual_summary_requested = False
