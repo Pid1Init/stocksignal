@@ -11,7 +11,10 @@ Weekly Hong Kong watchlist scanner that:
 
 - `weekly_hk_stock_alert.py`: main scanner script
 - `run_weekly_scan.sh`: one-command launcher (loads `.venv` + `telegram.env`)
-- `bitcoin_wallet_generator.py`: continuous Bitcoin wallet generator
+- `daily_tb_vol_rsi_alert.py`: TB_VOL_RSI_V1 daily scanner (Tweezer Bottom + Volume + RSI)
+- `run_daily_tb_signal.sh`: one-command launcher for daily TB_VOL_RSI_V1 scan
+- `telegram_trigger_listener.py`: handles Telegram `/trigger` command and runs all scanners
+- `run_trigger_listener.sh`: one-command launcher for `/trigger` listener
 - `requirements.txt`: Python dependencies
 
 ## Ubuntu VPS deployment
@@ -61,6 +64,23 @@ chmod +x ./run_weekly_scan.sh
 
 `--always-send` is optional and sends a Telegram message even when no signals are found.
 
+## Daily strategy (TB_VOL_RSI_V1) at 10:00 PM Hong Kong time
+
+This scanner checks only the latest completed trading day for:
+
+- Tweezer Bottom: previous day red, current day green, lows match within `0.5%`
+- Volume filter: `volume / SMA20(volume) >= 1.5`
+- RSI filter: `RSI14` between `60` and `80` (inclusive)
+
+Manual test:
+
+```bash
+chmod +x ./run_daily_tb_signal.sh
+./run_daily_tb_signal.sh
+```
+
+Use `--only-on-signal` to suppress no-signal messages.
+
 ## Schedule every Saturday 9:00 PM (Hong Kong time)
 
 Use cron with `CRON_TZ`:
@@ -81,6 +101,35 @@ Notes:
 - `6` means Saturday in cron.
 - Keep `telegram.env` readable only by trusted users.
 - Ensure `/var/log/stocksignal.log` is writable by the cron user.
+
+## Add daily cron at 10:00 PM (Hong Kong time)
+
+```cron
+CRON_TZ=Asia/Hong_Kong
+0 22 * * * /path/to/stocksignal/run_daily_tb_signal.sh >> /var/log/stocksignal-daily.log 2>&1
+```
+
+## Telegram `/trigger` command (manual on-demand scan)
+
+When you send `/trigger` to your bot from your configured `TELEGRAM_CHAT_ID`, it will:
+
+- run the weekly scanner
+- run the daily TB_VOL_RSI_V1 scanner
+- reply back to Telegram with combined results
+
+Manual test:
+
+```bash
+chmod +x ./run_trigger_listener.sh
+./run_trigger_listener.sh --ignore-old-updates
+./run_trigger_listener.sh
+```
+
+Recommended cron (checks bot updates every minute):
+
+```cron
+* * * * * /path/to/stocksignal/run_trigger_listener.sh >> /var/log/stocksignal-trigger.log 2>&1
+```
 
 ## Signal definitions
 
