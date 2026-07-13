@@ -296,6 +296,44 @@ def compute_total_balance_via_local_node(
     return tracked_addresses, max(0, total_sats)
 
 
+def send_balance_summary(
+    bot_token: str,
+    chat_id: str,
+    balance_mode: str,
+    bitcoin_cli_path: str,
+    wallet_name: str,
+    output_file: Path,
+    balance_api_base: str,
+    reason: str,
+) -> None:
+    if balance_mode == "local-node":
+        wallet_count, total_sats = compute_total_balance_via_local_node(
+            bitcoin_cli_path=bitcoin_cli_path,
+            wallet_name=wallet_name,
+        )
+        failed_lookups = 0
+        source_line = "Source: local-node (Bitcoin Core wallet)"
+    else:
+        wallet_count, total_sats, failed_lookups = compute_total_balance_via_api(
+            output_file=output_file,
+            balance_api_base=balance_api_base,
+        )
+        source_line = f"Source: API ({balance_api_base})"
+
+    message = (
+        f"Bitcoin wallet summary ({reason})\n"
+        f"Wallets tracked: {wallet_count}\n"
+        f"Total BTC: {total_sats / 100_000_000:.8f}\n"
+        f"Failed balance checks: {failed_lookups}\n"
+        f"{source_line}"
+    )
+    send_telegram_message(
+        bot_token=bot_token,
+        chat_id=chat_id,
+        text=message,
+    )
+
+
 def send_telegram_message(bot_token: str, chat_id: str, text: str) -> None:
     api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     response = requests.post(
@@ -309,12 +347,12 @@ def send_telegram_message(bot_token: str, chat_id: str, text: str) -> None:
         raise RuntimeError(f"Telegram API returned error: {payload}")
 
 
-def process_new_command(
+def process_bot_commands(
     bot_token: str,
     expected_chat_id: str,
     updates_offset: int,
     output_file: Path,
-) -> tuple[int, bool]:
+) -> tuple[int, bool, bool]:
     api_url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
     response = requests.get(
         api_url,
@@ -333,6 +371,7 @@ def process_new_command(
     results = payload.get("result", [])
     last_seen_update = updates_offset
     was_cleared = False
+    check_requested = False
     for update in results:
         if not isinstance(update, dict):
             continue
@@ -347,62 +386,28 @@ def process_new_command(
 
         if message_chat_id != expected_chat_id or not text:
             continue
-        if text.split()[0].lower() != "/new":
+        command = text.split()[0].lower()
+        if command == "/new":
+            truncate_backlog(output_file)
+            was_cleared = True
+            send_telegram_message(
+                bot_token=bot_token,
+                chat_id=expected_chat_id,
+                text=(
+                    "Wallet memory has been reset via /new.\n"
+                    "Backlog cleared and fresh wallet generation continues."
+                ),
+            )
             continue
+        if command == "/check":
+            check_requested = True
+            send_telegram_message(
+                bot_token=bot_token,
+                chat_id=expected_chat_id,
+                text="Manual balance check requested. Preparing summary now.",
+            )
 
-        truncate_backlog(output_file)
-        was_cleared = True
-        send_telegram_message(
-            bot_token=bot_token,
-            chat_id=expected_chat_id,
-            text=(
-                "Wallet memory has been reset via /new.\n"
-                "Backlog cleared and fresh wallet generation continues."
-            ),
-        )
-
-    return last_seen_update, was_cleared
-
-
-def fetch_balance_sats(balance_api_base: str, address: str) -> int:
-    url = f"{balance_api_base.rstrip('/')}/address/{address}"
-    response = requests.get(url, timeout=20)
-    response.raise_for_status()
-    payload = response.json()
-
-    chain_stats = payload.get("chain_stats", {})
-    mempool_stats = payload.get("mempool_stats", {})
-
-    chain_balance = int(chain_stats.get("funded_txo_sum", 0)) - int(
-        chain_stats.get("spent_txo_sum", 0)
-    )
-    mempool_balance = int(mempool_stats.get("funded_txo_sum", 0)) - int(
-        mempool_stats.get("spent_txo_sum", 0)
-    )
-    return max(0, chain_balance + mempool_balance)
-
-
-def compute_total_balance(
-    output_file: Path, balance_api_base: str
-) -> tuple[int, int, int]:
-    records = iter_wallet_records(output_file)
-    addresses = {
-        str(record.get("address", "")).strip()
-        for record in records
-        if record.get("address")
-    }
-    addresses = {address for address in addresses if address}
-
-    total_sats = 0
-    failed_lookups = 0
-    for address in sorted(addresses):
-        try:
-            total_sats += fetch_balance_sats(balance_api_base, address)
-        except Exception:  # pylint: disable=broad-except
-            failed_lookups += 1
-        time.sleep(0.03)
-
-    return len(addresses), total_sats, failed_lookups
+    return last_seen_update, was_cleared, check_requested
 
 
 def parse_args() -> argparse.Namespace:
@@ -561,6 +566,7 @@ def main() -> None:
     next_summary = time.monotonic() + max(10.0, args.telegram_summary_interval_seconds)
     next_generation = time.monotonic()
     next_import_sync = time.monotonic()
+    manual_summary_requested = False
 
     print(
         "Starting wallet generation daemon. Press Ctrl+C to stop. "
@@ -579,12 +585,17 @@ def main() -> None:
 
             if telegram_enabled and now >= next_poll:
                 try:
-                    telegram_offset, was_cleared = process_new_command(
+                    (
+                        telegram_offset,
+                        was_cleared,
+                        check_requested,
+                    ) = process_bot_commands(
                         bot_token=args.telegram_bot_token,
                         expected_chat_id=str(args.telegram_chat_id),
                         updates_offset=telegram_offset,
                         output_file=args.output,
                     )
+                    manual_summary_requested = manual_summary_requested or check_requested
                     if was_cleared:
                         generated = 0
                         storage_limit_notified = False
@@ -640,42 +651,35 @@ def main() -> None:
                     print(f"Local-node import sync error: {exc}")
                 next_import_sync = now + max(0.2, args.import_sync_interval_seconds)
 
-            if telegram_enabled and now >= next_summary:
+            should_send_scheduled_summary = telegram_enabled and now >= next_summary
+            should_send_manual_summary = telegram_enabled and manual_summary_requested
+            if should_send_scheduled_summary or should_send_manual_summary:
                 try:
                     if args.balance_mode == "local-node":
                         if not local_node_ready:
                             raise RuntimeError(
                                 "Local node mode enabled but wallet is unavailable."
                             )
-                        wallet_count, total_sats = compute_total_balance_via_local_node(
-                            bitcoin_cli_path=args.bitcoin_cli_path,
-                            wallet_name=active_wallet_name,
-                        )
-                        failed_lookups = 0
-                        source_line = "Source: local-node (Bitcoin Core wallet)"
-                    else:
-                        wallet_count, total_sats, failed_lookups = (
-                            compute_total_balance_via_api(
-                                output_file=args.output,
-                                balance_api_base=args.balance_api_base,
-                            )
-                        )
-                        source_line = f"Source: API ({args.balance_api_base})"
-                    message = (
-                        "Bitcoin wallet hourly summary\n"
-                        f"Wallets tracked: {wallet_count}\n"
-                        f"Total BTC: {total_sats / 100_000_000:.8f}\n"
-                        f"Failed balance checks: {failed_lookups}\n"
-                        f"{source_line}"
+                    summary_reason = (
+                        "manual /check"
+                        if should_send_manual_summary and not should_send_scheduled_summary
+                        else "hourly"
                     )
-                    send_telegram_message(
+                    send_balance_summary(
                         bot_token=args.telegram_bot_token,
                         chat_id=str(args.telegram_chat_id),
-                        text=message,
+                        balance_mode=args.balance_mode,
+                        bitcoin_cli_path=args.bitcoin_cli_path,
+                        wallet_name=active_wallet_name,
+                        output_file=args.output,
+                        balance_api_base=args.balance_api_base,
+                        reason=summary_reason,
                     )
                 except Exception as exc:  # pylint: disable=broad-except
                     print(f"Hourly summary error: {exc}")
-                next_summary = now + max(10.0, args.telegram_summary_interval_seconds)
+                if should_send_scheduled_summary:
+                    next_summary = now + max(10.0, args.telegram_summary_interval_seconds)
+                manual_summary_requested = False
 
             storage_bytes = backlog_size_bytes(args.output)
             if storage_bytes >= storage_limit_bytes:
