@@ -1,0 +1,19 @@
+[Unit]
+Description=Bitcoin wallet generator daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/workspace
+ExecStart=/workspace/run_bitcoin_wallet_generator.sh
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/workspace
+
+[Install]
+WantedBy=multi-user.target
