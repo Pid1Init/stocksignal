@@ -111,16 +111,23 @@ python3 weekly_hk_stock_alert.py --bullish-threshold 5 --bearish-threshold -5
 The repository now includes a standalone tool that continuously generates random
 12-word Bitcoin seed phrases and appends wallet records to a JSONL file.
 
+### Features
+
+- Continuous wallet generation (optionally gated by VPS load)
+- Backlog cap at configurable size (default `85 GB`)
+- Hourly Telegram summary of total BTC across all generated wallet addresses
+- Telegram `/new` command to clear backlog and continue generating fresh wallets
+
 Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Run a quick test (generates 5 wallets and exits):
+Run a quick test (generates 5 wallets and exits, Telegram disabled):
 
 ```bash
-python3 bitcoin_wallet_generator.py --count 5 --ignore-load
+python3 bitcoin_wallet_generator.py --count 5 --ignore-load --disable-telegram
 ```
 
 Run continuously, only when VPS load is below threshold:
@@ -129,11 +136,45 @@ Run continuously, only when VPS load is below threshold:
 python3 bitcoin_wallet_generator.py \
   --output ./generated_wallets.jsonl \
   --max-load-per-cpu 0.60 \
-  --poll-seconds 5
+  --poll-seconds 5 \
+  --storage-limit-gb 85 \
+  --telegram-summary-interval-seconds 3600
 ```
 
 Optional: include private keys in output (highly sensitive):
 
 ```bash
 python3 bitcoin_wallet_generator.py --include-private-key
+```
+
+### Telegram commands
+
+- `/new` — clears `generated_wallets.jsonl` backlog and continues generation.
+
+The script reads Telegram credentials from env vars:
+
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+
+### systemd service (auto-start on reboot)
+
+1. Make launcher executable:
+
+```bash
+chmod +x /workspace/run_bitcoin_wallet_generator.sh
+```
+
+2. Install service unit:
+
+```bash
+sudo cp /workspace/deploy/systemd/bitcoin-wallet-generator.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now bitcoin-wallet-generator.service
+```
+
+3. Check logs/status:
+
+```bash
+systemctl status bitcoin-wallet-generator.service
+journalctl -u bitcoin-wallet-generator.service -f
 ```
