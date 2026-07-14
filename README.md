@@ -315,6 +315,8 @@ Two scripts are included for full lifecycle automation:
   - stops node + generator
   - deletes node data mount/image and all `/root/.bitcoin.bak*`
   - redeploys from scratch by calling `deploy_bitcoin_node.sh --reset-data`
+  - sends Telegram alert on success/failure when `telegram.env` contains
+    `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
 
 ### Initial deployment
 
