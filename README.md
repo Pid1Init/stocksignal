@@ -271,3 +271,31 @@ sudo systemctl enable --now bitcoin-wallet-generator.service
 systemctl status bitcoin-wallet-generator.service
 journalctl -u bitcoin-wallet-generator.service -f
 ```
+
+### Daily chainstate rebuild script (03:00 Hong Kong time)
+
+`rebuild_chainstate_daily.sh` is included for aggressive maintenance workflows
+that intentionally delete `chainstate` and let Bitcoin Core rebuild it from
+available block files.
+
+> Warning: this is disruptive and can keep your node in reindex/rebuild work
+> most of the time if run too frequently.
+
+Run once manually:
+
+```bash
+sudo /root/stocksignal/rebuild_chainstate_daily.sh
+```
+
+Schedule it daily at 03:00 HKT with cron:
+
+```bash
+crontab -e
+```
+
+Add:
+
+```cron
+CRON_TZ=Asia/Hong_Kong
+0 3 * * * /root/stocksignal/rebuild_chainstate_daily.sh >> /var/log/chainstate-rebuild.log 2>&1
+```
