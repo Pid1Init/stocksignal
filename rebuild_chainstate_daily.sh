@@ -64,7 +64,21 @@ rm -rf -- "$CHAINSTATE_DIR"
 mkdir -p "$CHAINSTATE_DIR"
 
 log "Starting bitcoind with datadir $BITCOIN_DATA_DIR"
-"$BITCOIND_BIN" -datadir="$BITCOIN_DATA_DIR" -daemon
+started=0
+for _ in $(seq 1 60); do
+  if output=$("$BITCOIND_BIN" -datadir="$BITCOIN_DATA_DIR" -daemon 2>&1); then
+    started=1
+    break
+  fi
+  if [[ "$output" == *"Cannot obtain a lock on directory"* ]]; then
+    sleep 2
+    continue
+  fi
+  cleanup_and_exit "Failed to start bitcoind: $output"
+done
+if [[ "$started" -ne 1 ]]; then
+  cleanup_and_exit "bitcoind datadir lock was not released in time."
+fi
 
 log "Waiting for RPC readiness"
 "$BITCOIN_CLI" -datadir="$BITCOIN_DATA_DIR" -rpcwait getblockchaininfo >/dev/null
