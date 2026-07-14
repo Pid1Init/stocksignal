@@ -15,6 +15,7 @@ Weekly Hong Kong watchlist scanner that:
 - `run_daily_tb_signal.sh`: one-command launcher for daily TB_VOL_RSI_V1 scan
 - `telegram_trigger_listener.py`: handles Telegram `/trigger` command and runs all scanners
 - `run_trigger_listener.sh`: one-command launcher for `/trigger` listener
+- `futu_download_ohlc.py`: downloads daily OHLC since 2021 for 46 HK stocks from Futu
 - `requirements.txt`: Python dependencies
 
 ## Ubuntu VPS deployment
@@ -130,6 +131,29 @@ Recommended cron (checks bot updates every minute):
 ```cron
 * * * * * /path/to/stocksignal/run_trigger_listener.sh >> /var/log/stocksignal-trigger.log 2>&1
 ```
+
+## Download 46 stocks daily OHLC from Futu (since 2021)
+
+Prerequisite: run **Futu OpenD** on your VPS or reachable host (default `127.0.0.1:11111`).
+
+Run:
+
+```bash
+source .venv/bin/activate
+python3 futu_download_ohlc.py --start-date 2021-01-01 --output-dir futu_ohlc
+```
+
+Optional flags:
+
+- `--host 127.0.0.1`
+- `--port 11111`
+- `--end-date YYYY-MM-DD`
+
+Output:
+
+- per-symbol CSV: `futu_ohlc/HK_00700_daily.csv` (etc.)
+- merged CSV: `futu_ohlc/all_46_stocks_daily_ohlc.csv`
+- errors (if any): `futu_ohlc/download_errors.csv`
 
 ## Signal definitions
 
