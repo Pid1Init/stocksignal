@@ -189,6 +189,21 @@ EOF
 start_runtime() {
   log "Starting bitcoind."
   "$BITCOIND_BIN" -datadir="$DATA_LINK" -daemon=1
+  log "Waiting for bitcoind process and RPC cookie."
+  local cookie_path
+  cookie_path="${DATA_LINK}/.cookie"
+  for _ in $(seq 1 120); do
+    if ! pgrep -x bitcoind >/dev/null 2>&1; then
+      tail -n 40 "${DATA_LINK}/debug.log" 2>/dev/null || true
+      die "bitcoind exited before RPC became ready."
+    fi
+    if [[ -f "$cookie_path" ]]; then
+      break
+    fi
+    sleep 1
+  done
+  [[ -f "$cookie_path" ]] || die "RPC cookie was not created in time: ${cookie_path}"
+
   log "Waiting for RPC readiness."
   "$BITCOIN_CLI" -datadir="$DATA_LINK" -rpcwait getblockchaininfo >/dev/null
 
