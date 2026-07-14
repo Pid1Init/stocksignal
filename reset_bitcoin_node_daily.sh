@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eEuo pipefail
 
 # Daily destructive reset workflow:
 # - stop generator + bitcoind
@@ -14,9 +14,41 @@ MOUNT_POINT="${MOUNT_POINT:-/mnt/bitcoin50}"
 DATA_LINK="${DATA_LINK:-/root/.bitcoin}"
 GENERATOR_SERVICE="${GENERATOR_SERVICE:-bitcoin-wallet-generator.service}"
 BITCOIN_CLI="${BITCOIN_CLI:-/usr/local/bin/bitcoin-cli}"
+TELEGRAM_ENV_FILE="${TELEGRAM_ENV_FILE:-${REPO_DIR}/telegram.env}"
+HOST_TAG="${HOST_TAG:-$(hostname)}"
+START_EPOCH="$(date +%s)"
 
 log() {
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"
+}
+
+load_telegram_env() {
+  if [[ -f "$TELEGRAM_ENV_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$TELEGRAM_ENV_FILE"
+    set +a
+  fi
+}
+
+send_telegram_alert() {
+  local text="$1"
+  local token chat_id
+  token="${TELEGRAM_BOT_TOKEN:-}"
+  chat_id="${TELEGRAM_CHAT_ID:-}"
+  if [[ -z "$token" || -z "$chat_id" ]]; then
+    return
+  fi
+  curl -sS -X POST "https://api.telegram.org/bot${token}/sendMessage" \
+    -d "chat_id=${chat_id}" \
+    --data-urlencode "text=${text}" >/dev/null || true
+}
+
+on_error() {
+  local line_no="$1"
+  local elapsed
+  elapsed="$(( $(date +%s) - START_EPOCH ))"
+  send_telegram_alert "Bitcoin node daily reset FAILED on ${HOST_TAG} at line ${line_no} after ${elapsed}s."
 }
 
 die() {
@@ -24,8 +56,11 @@ die() {
   exit 1
 }
 
+trap 'on_error $LINENO' ERR
+
 [[ "$(id -u)" -eq 0 ]] || die "Run as root."
 [[ -x "$DEPLOY_SCRIPT" ]] || die "Deploy script not found or not executable: ${DEPLOY_SCRIPT}"
+load_telegram_env
 
 exec 9>"$LOCKFILE"
 if ! flock -n 9; then
@@ -64,3 +99,5 @@ log "Re-deploying fresh node."
 "$DEPLOY_SCRIPT" --reset-data
 
 log "Daily node reset complete."
+elapsed="$(( $(date +%s) - START_EPOCH ))"
+send_telegram_alert "Bitcoin node daily reset succeeded on ${HOST_TAG} in ${elapsed}s."
