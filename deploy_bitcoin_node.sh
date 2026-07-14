@@ -23,6 +23,23 @@ log() {
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"
 }
 
+safe_unmount() {
+  local target="$1"
+  if ! mountpoint -q "$target"; then
+    return
+  fi
+
+  for _ in $(seq 1 10); do
+    if umount "$target" 2>/dev/null; then
+      return
+    fi
+    sleep 1
+  done
+
+  log "Regular unmount failed for ${target}; trying lazy unmount."
+  umount -l "$target"
+}
+
 die() {
   log "ERROR: $*"
   exit 1
@@ -118,9 +135,11 @@ prepare_mount() {
 
   if [[ "$RESET_DATA" -eq 1 ]]; then
     log "Reset requested; removing old Bitcoin mount/image/data."
-    umount "$MOUNT_POINT" 2>/dev/null || true
+    safe_unmount "$MOUNT_POINT"
     rm -f "$IMAGE_PATH"
-    rm -rf "$MOUNT_POINT"
+    if ! mountpoint -q "$MOUNT_POINT"; then
+      rm -rf "$MOUNT_POINT"
+    fi
     rm -f "$DATA_LINK"
     rm -rf /root/.bitcoin.bak*
     mkdir -p "$MOUNT_POINT"
