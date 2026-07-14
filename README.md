@@ -299,3 +299,40 @@ Add:
 CRON_TZ=Asia/Hong_Kong
 0 3 * * * /root/stocksignal/rebuild_chainstate_daily.sh >> /var/log/chainstate-rebuild.log 2>&1
 ```
+
+## Full node reset automation (7 GiB prune + 50 GiB hard cap)
+
+Two scripts are included for full lifecycle automation:
+
+- `deploy_bitcoin_node.sh`
+  - installs Bitcoin Core binaries (if missing)
+  - enforces OS-level 50 GiB cap with `/root/bitcoin50.img` mounted at `/mnt/bitcoin50`
+  - symlinks `/root/.bitcoin` to that capped mount
+  - writes `bitcoin.conf` with `prune=7000` and RPC localhost settings
+  - starts node and restarts `bitcoin-wallet-generator.service` so `/check` works
+  - installs daily cron reset at 03:00 HKT
+- `reset_bitcoin_node_daily.sh`
+  - stops node + generator
+  - deletes node data mount/image and all `/root/.bitcoin.bak*`
+  - redeploys from scratch by calling `deploy_bitcoin_node.sh --reset-data`
+
+### Initial deployment
+
+```bash
+sudo /root/stocksignal/deploy_bitcoin_node.sh --reset-data
+```
+
+### Manual destructive daily reset run
+
+```bash
+sudo /root/stocksignal/reset_bitcoin_node_daily.sh
+```
+
+### Installed schedule
+
+`deploy_bitcoin_node.sh` installs this root crontab entry:
+
+```cron
+CRON_TZ=Asia/Hong_Kong
+0 3 * * * /root/stocksignal/reset_bitcoin_node_daily.sh >> /var/log/bitcoin-node-reset.log 2>&1
+```

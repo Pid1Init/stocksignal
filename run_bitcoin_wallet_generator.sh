@@ -24,4 +24,4 @@ exec python3 bitcoin_wallet_generator.py \
   --telegram-summary-interval-seconds 3600 \
   --storage-limit-gb 85 \
   --balance-mode local-node \
-  --bitcoin-cli-path bitcoin-cli
+  --bitcoin-cli-path /usr/local/bin/bitcoin-cli
