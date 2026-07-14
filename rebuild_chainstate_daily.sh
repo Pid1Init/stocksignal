@@ -27,6 +27,7 @@ fi
 
 CHAINSTATE_DIR="${BITCOIN_DATA_DIR}/chainstate"
 BLOCKS_DIR="${BITCOIN_DATA_DIR}/blocks"
+MEMPOOL_FILE="${BITCOIN_DATA_DIR}/mempool.dat"
 
 [[ -d "$BITCOIN_DATA_DIR" ]] || cleanup_and_exit "Bitcoin data dir not found: $BITCOIN_DATA_DIR"
 [[ -d "$BLOCKS_DIR" ]] || cleanup_and_exit "Blocks dir not found: $BLOCKS_DIR"
@@ -62,6 +63,11 @@ fi
 log "Deleting chainstate: $CHAINSTATE_DIR"
 rm -rf -- "$CHAINSTATE_DIR"
 mkdir -p "$CHAINSTATE_DIR"
+
+if [[ -f "$MEMPOOL_FILE" ]]; then
+  log "Removing stale mempool file: $MEMPOOL_FILE"
+  rm -f -- "$MEMPOOL_FILE"
+fi
 
 log "Starting bitcoind with datadir $BITCOIN_DATA_DIR"
 started=0
