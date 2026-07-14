@@ -22,6 +22,23 @@ log() {
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"
 }
 
+safe_unmount() {
+  local target="$1"
+  if ! mountpoint -q "$target"; then
+    return
+  fi
+
+  for _ in $(seq 1 10); do
+    if umount "$target" 2>/dev/null; then
+      return
+    fi
+    sleep 1
+  done
+
+  log "Regular unmount failed for ${target}; trying lazy unmount."
+  umount -l "$target"
+}
+
 load_telegram_env() {
   if [[ -f "$TELEGRAM_ENV_FILE" ]]; then
     set -a
@@ -90,9 +107,11 @@ pkill -9 -x bitcoind || true
 
 log "Deleting Bitcoin data link/image/mount and backups."
 rm -f "$DATA_LINK"
-umount "$MOUNT_POINT" 2>/dev/null || true
+safe_unmount "$MOUNT_POINT"
 rm -f "$IMAGE_PATH"
-rm -rf "$MOUNT_POINT"
+if ! mountpoint -q "$MOUNT_POINT"; then
+  rm -rf "$MOUNT_POINT"
+fi
 rm -rf /root/.bitcoin.bak*
 
 log "Re-deploying fresh node."
