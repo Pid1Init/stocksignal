@@ -1,2 +1,4 @@
 __pycache__/
 *.pyc
+export_bundle/
+stocksignal_local_bundle.tar.gz
