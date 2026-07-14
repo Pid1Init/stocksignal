@@ -140,7 +140,11 @@ prepare_mount() {
     if ! mountpoint -q "$MOUNT_POINT"; then
       rm -rf "$MOUNT_POINT"
     fi
-    rm -f "$DATA_LINK"
+    if [[ -L "$DATA_LINK" || -f "$DATA_LINK" ]]; then
+      rm -f "$DATA_LINK"
+    elif [[ -d "$DATA_LINK" ]]; then
+      rm -rf "$DATA_LINK"
+    fi
     rm -rf /root/.bitcoin.bak*
     mkdir -p "$MOUNT_POINT"
   fi
