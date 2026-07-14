@@ -106,7 +106,11 @@ done
 pkill -9 -x bitcoind || true
 
 log "Deleting Bitcoin data link/image/mount and backups."
-rm -f "$DATA_LINK"
+if [[ -L "$DATA_LINK" || -f "$DATA_LINK" ]]; then
+  rm -f "$DATA_LINK"
+elif [[ -d "$DATA_LINK" ]]; then
+  rm -rf "$DATA_LINK"
+fi
 safe_unmount "$MOUNT_POINT"
 rm -f "$IMAGE_PATH"
 if ! mountpoint -q "$MOUNT_POINT"; then
