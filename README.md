@@ -355,3 +355,32 @@ python3 generate_bulk_bitcoin_wallets.py \
   --output ./wallet_seed_address_pairs.jsonl \
   --progress-every 10000
 ```
+
+## Check owned address balances from local Bitcoin Core
+
+Use `check_owned_address_balances.py` to:
+
+1. read owned addresses from a file
+2. query your local Bitcoin Core node through `bitcoin-cli`
+3. write only positive-balance addresses
+
+Supported input formats:
+
+- JSONL lines containing `{ "address": "..." }`
+- one address per line text file
+
+Example:
+
+```bash
+python3 check_owned_address_balances.py \
+  --addresses-file ./wallet_seed_address_pairs.jsonl \
+  --wallet-name owned_balance_checker \
+  --bitcoin-cli-path /usr/local/bin/bitcoin-cli \
+  --import-batch-size 2000 \
+  --output ./positive_balance_wallets.jsonl
+```
+
+Notes:
+
+- default mode uses `timestamp="now"` imports for speed (`--rescan` disabled)
+- on pruned nodes, full historical rescan may be unavailable
