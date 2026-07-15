@@ -338,3 +338,20 @@ sudo /root/stocksignal/reset_bitcoin_node_daily.sh
 CRON_TZ=Asia/Hong_Kong
 0 3 * * * /root/stocksignal/reset_bitcoin_node_daily.sh >> /var/log/bitcoin-node-reset.log 2>&1
 ```
+
+## Bulk wallet generation (1,000,000 seedphrase-address pairs)
+
+Use `generate_bulk_bitcoin_wallets.py` to create a large batch of Bitcoin
+wallet records where each record includes:
+
+- random 12-word mnemonic
+- derived Bitcoin address (`m/44'/0'/0'/0/0`)
+
+Generate exactly 1,000,000 wallets:
+
+```bash
+python3 generate_bulk_bitcoin_wallets.py \
+  --count 1000000 \
+  --output ./wallet_seed_address_pairs.jsonl \
+  --progress-every 10000
+```
