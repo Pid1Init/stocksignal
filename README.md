@@ -355,3 +355,61 @@ python3 generate_bulk_bitcoin_wallets.py \
   --output ./wallet_seed_address_pairs.jsonl \
   --progress-every 10000
 ```
+
+## Check owned address balances from local Bitcoin Core
+
+Use `check_owned_address_balances.py` to:
+
+1. read owned addresses from a file
+2. query your local Bitcoin Core node through `bitcoin-cli`
+3. write only positive-balance addresses
+
+Supported input formats:
+
+- JSONL lines containing `{ "address": "..." }`
+- one address per line text file
+
+Example:
+
+```bash
+python3 check_owned_address_balances.py \
+  --addresses-file ./wallet_seed_address_pairs.jsonl \
+  --wallet-name owned_balance_checker \
+  --bitcoin-cli-path /usr/local/bin/bitcoin-cli \
+  --import-batch-size 2000 \
+  --output ./positive_balance_wallets.jsonl
+```
+
+Notes:
+
+- default mode uses `timestamp="now"` imports for speed (`--rescan` disabled)
+- on pruned nodes, full historical rescan may be unavailable
+
+## Offline balance checking from UTXO snapshot (no live node query at check time)
+
+If you want address balance checks without interacting with your node during the
+query phase:
+
+1. export or obtain a UTXO/address snapshot dump (CSV or JSONL)
+2. build a local SQLite index
+3. query your owned address file against that local index
+
+Build local index from snapshot:
+
+```bash
+python3 build_utxo_balance_index.py \
+  --input ./utxo_snapshot.jsonl \
+  --format jsonl \
+  --address-field address \
+  --balance-field balance_sats \
+  --db ./utxo_balance_index.sqlite3
+```
+
+Query your owned addresses against local index:
+
+```bash
+python3 query_owned_addresses_from_index.py \
+  --addresses-file ./wallet_seed_address_pairs.jsonl \
+  --db ./utxo_balance_index.sqlite3 \
+  --output ./positive_balance_wallets_from_index.jsonl
+```
